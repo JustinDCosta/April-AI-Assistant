@@ -65,3 +65,21 @@ whisper_model/
 piper_tts/
 *.bin
 *.onnx
+
+
+# Sensitive Keys and Tokens
+.env
+credentials.json
+token.json
+
+# Local Databases and Memory
+chroma_db/
+memory.json
+notes.md
+chat_history.md
+
+# Knowledge Base and Temp Files
+knowledge_base/
+temp_shazam.wav
+output.wav
+__pycache__/

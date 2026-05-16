@@ -8,6 +8,7 @@ Groq with stepped fallbacks when the API or primary model is unavailable.
 import ollama
 import os
 import json
+import datetime
 from typing import Any, cast
 
 from dotenv import load_dotenv
@@ -86,8 +87,17 @@ OLLAMA_TOOLS: list[dict[str, Any]] = [
         'type': 'function',
         'function': {
             'name': 'check_local_weather',
-            'description': 'Call this ONLY when the user explicitly asks for the weather, temperature, or forecast. DO NOT call this if the user is just talking about their day, taking a bath, or having a normal conversation.',
-            'parameters': {'type': 'object', 'properties': {}, 'required': []}
+            'description': 'Call this ONLY when the user explicitly asks for the weather, temperature, or forecast.',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'city': {
+                        'type': 'string',
+                        'description': 'The city to check the weather for. Defaults to Sevran if not specified.'
+                    }
+                },
+                'required': []
+            }
         }
     },
     {
@@ -126,12 +136,15 @@ OLLAMA_TOOLS: list[dict[str, Any]] = [
         'type': 'function',
         'function': {
             'name': 'media_control',
-            'description': 'Call this to change system volume relative to where it is now, or to skip/pause tracks.',
+            'description': 'Call this to pause, play, unpause, resume, replay, or skip media tracks, as well as change system volume relative to where it is now.',
             'parameters': {
                 'type': 'object',
-                'properties': {'action': {'type': 'string',
-                                          'enum': ['play_pause', 'next', 'previous', 'mute', 'volume_up',
-                                                   'volume_down']}},
+                'properties': {
+                    'action': {
+                        'type': 'string',
+                        'enum': ['play_pause', 'next', 'previous', 'mute', 'volume_up', 'volume_down']
+                    }
+                },
                 'required': ['action']
             }
         }
@@ -159,6 +172,107 @@ OLLAMA_TOOLS: list[dict[str, Any]] = [
                 'required': ['minutes']
             }
         }
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'cancel_all_timers',
+            'description': 'Call this tool ANY TIME the user asks you to cancel, stop, or remove a timer, alarm, or reminder.',
+            'parameters': {'type': 'object', 'properties': {}, 'required': []}
+        }
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'read_clipboard',
+            'description': 'Call this tool ANY TIME the user asks you to read, summarize, or analyze what they just copied, or asks what is on their clipboard.',
+            'parameters': {'type': 'object', 'properties': {}, 'required': []}
+        }
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'check_system_diagnostics',
+            'description': 'Call this tool when the user asks about computer performance, CPU usage, RAM, or why the computer is running slow.',
+            'parameters': {'type': 'object', 'properties': {}, 'required': []}
+        }
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'analyze_screen',
+            'description': 'Call this tool ONLY when the user EXPLICITLY asks you to "look at my screen", "what am I looking at", or "read the screen". CRITICAL: DO NOT call this tool if the user is just talking about their day or making casual conversation.',
+            'parameters': {'type': 'object', 'properties': {}, 'required': []}
+        }
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'check_calendar',
+            'description': 'Call this tool when the user asks about their schedule, their calendar, their day, or upcoming events.',
+            'parameters': {'type': 'object', 'properties': {}, 'required': []}
+        }
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'add_calendar_event',
+            'description': 'Call this tool when the user asks to schedule something, add an event to their calendar, or set an appointment.',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'summary': {'type': 'string', 'description': 'The name or title of the event.'},
+                    'hour': {'type': 'integer',
+                             'description': 'The hour of the event in 24-hour format (0-23). Example: 5 PM is 17.'},
+                    'minute': {'type': 'integer', 'description': 'The minute of the event (0-59).'}
+                },
+                'required': ['summary', 'hour', 'minute']
+            }
+        }
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'delete_calendar_event',
+            'description': 'Call this tool when the user wants to cancel, remove, or delete an event or appointment from their calendar.',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'query': {'type': 'string', 'description': 'A keyword or title of the event to delete.'}
+                },
+                'required': ['query']
+            }
+        }
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'sync_knowledge_base',
+            'description': 'Call this tool when the user asks you to read, scan, update, or sync their local files, university folders, or knowledge base.',
+            'parameters': {'type': 'object', 'properties': {}, 'required': []}
+        }
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'search_knowledge_base',
+            'description': 'Call this tool when the user asks a question about their personal files, documents, PDFs, university notes, or syllabus.',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'query': {'type': 'string', 'description': 'The exact search query to look for in the documents.'}
+                },
+                'required': ['query']
+            }
+        }
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'identify_song',
+            'description': 'Call this tool when the user asks what song is playing, asks you to identify the music, or asks you to "Shazam" a track.',
+            'parameters': {'type': 'object', 'properties': {}, 'required': []}
+        }
     }
 ]
 
@@ -181,10 +295,15 @@ def process_intent(user_input: str) -> str:
     print(f"[SYSTEM] Local Router (Qwen) analyzing: '{user_input}'")
 
     try:
-        qwen_messages = [
+        qwen_messages: list[dict[str, str]] = [
             {
                 'role': 'system',
-                'content': 'You are a strict tool router. ONLY call a tool if the user explicitly requests a physical action (like opening an app, setting volume, searching the web, or checking weather). If the user asks a question about themselves, their past, their memory, or just wants to chat, DO NOT call any tools.'
+                'content': (
+                    "You are a strict tool router. ONLY call a tool if the user explicitly requests a physical action "
+                    "(like searching the web, checking weather, taking a screenshot, or managing media). "
+                    "CRITICAL RULE: If the user is just making a conversational statement (e.g., 'I went to the gym', 'I had a good day'), "
+                    "telling a story, or asking for advice, you MUST NOT call any tools. Just output normal text."
+                )
             }
         ]
         # Recent turns give short continuity without growing the router context without bound.
@@ -200,41 +319,52 @@ def process_intent(user_input: str) -> str:
         print(f"[❌ OLLAMA ROUTER ERROR]: {e}")
         return "My local routing system is offline."
 
-    web_context = ""
-    spoken_replies = []
+    tool_context: str = ""
+    spoken_replies: list[str] = []
+
+    # Define tools that gather context for the LLM to summarize/analyze
+    context_tools: list[str] = ["search_web", "read_clipboard", "check_system_diagnostics", "search_knowledge_base",
+                                "check_local_weather"]
 
     if response.get('message', {}).get('tool_calls'):
         for tool_call in response['message']['tool_calls']:
-            func_name = tool_call['function']['name']
-            func_args = tool_call['function']['arguments']
+            func_name: str = tool_call['function']['name']
+            func_args: dict[str, Any] = tool_call['function']['arguments']
 
             if func_name in AVAILABLE_TOOLS:
                 print(f"[SYSTEM] Executing Tool: {func_name}")
                 try:
-                    action_result = AVAILABLE_TOOLS[func_name](**func_args)
+                    action_result: str = AVAILABLE_TOOLS[func_name](**func_args)
 
-                    if func_name == "search_web":
-                        web_context = action_result
-                        print("[SYSTEM] Web data retrieved. Passing to Groq Cloud...")
+                    if func_name in context_tools:
+                        tool_context += f"Data from {func_name}:\n{action_result}\n\n"
+                        print(f"[SYSTEM] Data from {func_name} retrieved. Passing to Groq Cloud...")
                     else:
                         spoken_replies.append(action_result)
                 except Exception as e:
                     print(f"[❌ TOOL ERROR]: {e}")
                     spoken_replies.append(f"I ran into an error trying to use {func_name}.")
 
-        # Non-search tools already produced user-facing strings; skip cloud call when no synthesis is needed.
-        if spoken_replies and not web_context:
+        # Non-context tools already produced user-facing strings; skip cloud call when no synthesis is needed.
+        if spoken_replies and not tool_context:
             return " ".join(spoken_replies)
 
     print("[SYSTEM] Routing to Groq (Llama 3.3 70B)...")
-    final_prompt = user_input
-    if web_context:
+    final_prompt: str = user_input
+
+    if tool_context:
         final_prompt = (
-            f"The user asked: '{user_input}'. Here is data from the web: \n{web_context}\n\n"
-            "Based ONLY on this data, answer the question conversationally."
+            f"The user asked: '{user_input}'. Here is the data you requested from your tools:\n{tool_context}\n\n"
+            "Read the user's prompt and use this data to answer, summarize, or explain as requested."
         )
 
-    messages_payload = [{"role": "system", "content": system_instruction}]
+    # Generate the live date and time for this specific exact turn
+    live_time: str = datetime.datetime.now().strftime("%A, %B %d, %Y at %I:%M %p")
+
+    # Inject it into the base system instruction
+    dynamic_system_prompt: str = f"{system_instruction}\n\nCRITICAL SYSTEM FACT - The current live Date and Time is: {live_time}"
+
+    messages_payload: list[dict[str, str]] = [{"role": "system", "content": dynamic_system_prompt}]
     messages_payload.extend(chat_history)
     messages_payload.append({"role": "user", "content": final_prompt})
 
